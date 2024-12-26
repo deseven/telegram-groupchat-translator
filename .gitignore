@@ -1,0 +1,4 @@
+node_modules/
+.env
+whitelist.json
+package-lock.json

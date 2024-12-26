@@ -1,0 +1,12 @@
+version: "3.9"
+services:
+  telegram-groupchat-translator:
+    image: node:18-alpine
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: sh -c "npm install && npm run start"
+    env_file:
+      - .env
+    ports:
+      - "5000:5000"
