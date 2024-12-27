@@ -12,6 +12,15 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const PORT = process.env.PORT || 3000;
 const LOG_LEVEL = process.env.LOG_LEVEL || 'warn'; // default to 'warn'
 const ADMIN_USER_ID = process.env.ADMIN_USER_ID;    // admin ID
+const INTRO = `Hello! This is a private translation bot. If you have admin rights you can use these commands:
+/whitelist - to display current whitelist
+/whitelist_add - to add or edit a user in the whitelist
+/whitelist_remove - to remove a user from the whitelist
+
+Otherwise you can set up your own instance, more info here:
+https://github.com/deseven/telegram-groupchat-translator
+
+Your User ID is %USER_ID%.`;
 
 // DeepL
 const DEEPL_AUTH_KEY = process.env.DEEPL_AUTH_KEY;
@@ -19,6 +28,10 @@ const DEEPL_AUTH_KEY = process.env.DEEPL_AUTH_KEY;
 // ChatGPT
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-3.5-turbo';
+const OPENAI_PROMPT = `You are a helpful AI that translates user content into language code %TARGET_LANG%. Rules:
+ - the content is a chat message, so slang and informal wording are acceptable, be casual but precise
+ - output only the translated message and nothing else
+ - if the text is already in that language, return it as-is`;
 
 // -- Winston Logger --
 const logger = winston.createLogger({
@@ -120,10 +133,7 @@ async function callChatGPT(text, targetLang) {
     messages: [
       {
         role: 'system',
-        content: `You are a helpful AI that translates user content into language code ${targetLang}. Rules:
- - the content is a chat message, so slang and informal wording are acceptable, be casual but precise
- - output only the translated message and nothing else
- - if the text is already in that language, return it as-is`
+        content: OPENAI_PROMPT.replace('%TARGET_LANG%',targetLang)
       },
       {
         role: 'user',
@@ -187,15 +197,7 @@ bot.start((ctx) => {
   logger.info(`Received "/start" from user ${userId} in chat: ${chatType}`);
 
   if (chatType === 'private') {
-    ctx.reply(`Hello! This is a private translation bot. If you have admin rights you can use these commands:
-/whitelist - to display current whitelist
-/whitelist_add - to add or edit a user in the whitelist
-/whitelist_remove - to remove a user from the whitelist
-
-Otherwise you can set up your own instance, more info here:
-https://github.com/deseven/telegram-groupchat-translator
-
-Your User ID is ${userId}.`);
+    ctx.reply(INTRO.replace('%USER_ID%',userId));
   }
 });
 
@@ -283,6 +285,11 @@ bot.on('message', async (ctx) => {
           `service=${service}, target_lang=${target_lang}`
         );
         const translated = await translateText(messageText, target_lang, service);
+
+        if (translated == messageText) {
+          logger.debug('Skipping translation because translated text is the same.');
+          return;
+        }
 
         // Reply to the original message
         await ctx.reply(translated, { reply_to_message_id: ctx.message.message_id });
