@@ -269,6 +269,11 @@ bot.on('message', async (ctx) => {
 
   // -- Translation in Group Chats Only --
   if (chatType && chatType.endsWith('group')) {
+    // Ignore commands
+    if (messageText.startsWith('/')) {
+      logger.debug('Skipping translation for a command.');
+      return;
+    }
     if (userWhitelist[userId]) {
       const { target_lang, service } = userWhitelist[userId];
 
