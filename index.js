@@ -13,9 +13,9 @@ const PORT = process.env.PORT || 3000;
 const LOG_LEVEL = process.env.LOG_LEVEL || 'warn'; // default to 'warn'
 const ADMIN_USER_ID = process.env.ADMIN_USER_ID;    // admin ID
 const INTRO = `Hello! This is a private translation bot. If you have admin rights you can use these commands:
-/whitelist - to display current whitelist
-/whitelist_add - to add or edit a user in the whitelist
-/whitelist_remove - to remove a user from the whitelist
+  /whitelist - to display current whitelist
+  /whitelist_add - to add or edit a user in the whitelist
+  /whitelist_remove - to remove a user from the whitelist
 
 Otherwise you can set up your own instance, more info here:
 https://github.com/deseven/telegram-groupchat-translator
@@ -37,21 +37,10 @@ const OPENAI_PROMPT = `You are a helpful AI that translates user content into la
 const logger = winston.createLogger({
   level: LOG_LEVEL,
   format: winston.format.combine(
-    // Add color codes for levels
     winston.format.colorize(),
-
-    // Add a timestamp property to `info`
-    winston.format.timestamp({
-      format: 'YYYY-MM-DD HH:mm:ss'
-    }),
-
-    // Align message output
+    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
     winston.format.align(),
-
-    // Custom printf to format as [TIMESTAMP] LEVEL: message
-    winston.format.printf(({ timestamp, level, message }) => {
-      return `[${timestamp}] [${level}]: ${message}`;
-    })
+    winston.format.printf(({ timestamp, level, message }) => `[${timestamp}] [${level}]: ${message}`)
   ),
   transports: [new winston.transports.Console()]
 });
@@ -65,7 +54,7 @@ try {
   const data = JSON.parse(rawData);
 
   if (Array.isArray(data.users)) {
-    data.users.forEach((user) => {
+    data.users.forEach(user => {
       const { id, target_lang, service } = user;
       if (id && target_lang && service) {
         userWhitelist[id] = {
@@ -77,7 +66,7 @@ try {
     logger.info(`Loaded ${Object.keys(userWhitelist).length} whitelisted user(s).`);
   }
 } catch (err) {
-  logger.error("Error reading or parsing whitelist.json:");
+  logger.error("Error reading or parsing whitelist.json:", err);
 }
 
 // -- Helper to Save Whitelist to File --
@@ -104,7 +93,6 @@ function saveWhitelistToFile() {
  * -------------------------
  */
 async function callDeepL(text, targetLang) {
-  // Single attempt calling DeepL with 10s timeout
   const response = await axios({
     method: 'POST',
     url: 'https://api-free.deepl.com/v2/translate',
@@ -119,12 +107,7 @@ async function callDeepL(text, targetLang) {
     timeout: 10000 // 10 seconds
   });
 
-  if (
-    response.data &&
-    response.data.translations &&
-    response.data.translations[0] &&
-    response.data.translations[0].text
-  ) {
+  if (response.data?.translations?.[0]?.text) {
     return response.data.translations[0].text;
   }
 
@@ -144,7 +127,7 @@ async function callChatGPT(text, targetLang) {
     messages: [
       {
         role: 'system',
-        content: OPENAI_PROMPT.replace('%TARGET_LANG%',targetLang)
+        content: OPENAI_PROMPT.replace('%TARGET_LANG%', targetLang)
       },
       {
         role: 'user',
@@ -154,12 +137,7 @@ async function callChatGPT(text, targetLang) {
     temperature: 0.2
   });
 
-  if (
-    response.choices &&
-    response.choices[0] &&
-    response.choices[0].message &&
-    response.choices[0].message.content
-  ) {
+  if (response.choices?.[0]?.message?.content) {
     return response.choices[0].message.content.trim();
   }
 
@@ -173,10 +151,8 @@ async function callChatGPT(text, targetLang) {
  */
 async function translateText(text, targetLang, service) {
   const MAX_TRIES = 3;
-  let attempt = 0;
 
-  while (attempt < MAX_TRIES) {
-    attempt++;
+  for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
     try {
       logger.debug(`Attempt ${attempt}/${MAX_TRIES} for ${service.toUpperCase()} translation...`);
 
@@ -194,122 +170,103 @@ async function translateText(text, targetLang, service) {
       }
     }
   }
-  // Should never get here
   throw new Error('Unexpected error in translateText()');
 }
 
 // -- Initialize the Telegraf Bot --
 const bot = new Telegraf(BOT_TOKEN);
 
-// 1. /start command in private chats
-bot.start((ctx) => {
-  const userId = ctx.from?.id;
-  const chatType = ctx.chat?.type;
-  logger.info(`Received "/start" from user ${userId} in chat: ${chatType}`);
-
-  if (chatType === 'private') {
-    ctx.reply(INTRO.replace('%USER_ID%',userId));
-  }
-});
-
-// 2. Manage ANY message (text, photo, video, etc.)
+// -- Unified Message Handler --
 bot.on('message', async (ctx) => {
   const userId = ctx.from?.id;
   const chatType = ctx.chat?.type;
-
-  // If there's text, it's in ctx.message.text; if caption, in ctx.message.caption
   const messageText = ctx.message.text || ctx.message.caption;
 
   logger.info(`Incoming message from user: ${userId}, chat type: ${chatType}`);
 
-  if (!messageText) {
-    logger.debug('No text/caption found. Skipping translation.');
-    return;
-  }
-
-  // -- Admin Commands (Private Chat) --
-  // Make sure we only process these if it's a private chat AND the user is admin.
-  if (chatType === 'private' && String(userId) === String(ADMIN_USER_ID)) {
+  if (messageText) {
     const trimmedText = messageText.trim();
-    if (trimmedText.startsWith('/whitelist_add')) {
-      // e.g. /whitelist_add 12345 RU chatgpt
-      const parts = trimmedText.split(' ').slice(1); // everything after the command
-      if (parts.length < 3) {
-        ctx.reply('Usage: /whitelist_add USER_ID TARGET_LANG SERVICE');
-        return;
-      }
-      const [userIdArg, targetLangArg, serviceArg] = parts;
-      userWhitelist[userIdArg] = {
-        target_lang: targetLangArg,
-        service: serviceArg.toLowerCase()
-      };
-      saveWhitelistToFile();
-      logger.info(`User ${userIdArg} added/updated. target_lang=${targetLangArg}, service=${serviceArg}`);
-      ctx.reply(`User ${userIdArg} added/updated. target_lang=${targetLangArg}, service=${serviceArg}`);
-      return;
+
+    // Handle /start or /help command
+    if ((chatType === 'private') && (trimmedText == '/start' || trimmedText == '/help')) {
+      logger.info(`Received "${trimmedText}" from user ${userId} in private chat.`);
+      return ctx.reply(INTRO.replace('%USER_ID%', userId));
     }
 
-    if (trimmedText.startsWith('/whitelist_remove')) {
-      // e.g. /whitelist_remove 12345
-      const parts = trimmedText.split(' ').slice(1);
-      if (parts.length < 1) {
-        ctx.reply('Usage: /whitelist_remove USER_ID');
-        return;
-      }
-      const [userIdArg] = parts;
-      if (userWhitelist[userIdArg]) {
-        delete userWhitelist[userIdArg];
-        saveWhitelistToFile();
-        logger.info(`User ${userIdArg} removed from the whitelist.`);
-        ctx.reply(`User ${userIdArg} removed from the whitelist.`);
-      } else {
-        ctx.reply(`User ${userIdArg} not found in the whitelist.`);
-      }
-      return;
-    }
-
-    if (trimmedText == '/whitelist') {
-      // Output JSON of the current list
-      const currentList = Object.entries(userWhitelist).map(([id, data]) => ({
-        id,
-        target_lang: data.target_lang,
-        service: data.service
-      }));
-      ctx.reply(`Current whitelist:\n${JSON.stringify(currentList, null, 2)}`);
-      return;
-    }
-  }
-
-  // -- Translation in Group Chats Only --
-  if (chatType && chatType.endsWith('group')) {
-    // Ignore commands
-    if (messageText.startsWith('/')) {
-      logger.debug('Skipping translation for a command.');
-      return;
-    }
-    if (userWhitelist[userId]) {
-      const { target_lang, service } = userWhitelist[userId];
-
-      try {
-        logger.debug(
-          `Original message from user ${userId}: "${messageText}"\n` +
-          `service=${service}, target_lang=${target_lang}`
-        );
-        const translated = await translateText(messageText, target_lang, service);
-
-        if (translated == messageText) {
-          logger.debug('Skipping translation because translated text is the same.');
-          return;
+    // Admin Commands (Private Chat)
+    if (chatType === 'private' && String(userId) === String(ADMIN_USER_ID)) {
+      if (trimmedText.startsWith('/whitelist_add')) {
+        const parts = trimmedText.split(' ').slice(1);
+        if (parts.length < 3) {
+          return ctx.reply('Usage: /whitelist_add USER_ID TARGET_LANG SERVICE');
         }
-
-        // Reply to the original message
-        await ctx.reply(translated, { reply_to_message_id: ctx.message.message_id });
-      } catch (err) {
-        logger.error(`Could not translate msg from user ${userId}: ${err.message}`);
-        await ctx.reply('Translation failed', { reply_to_message_id: ctx.message.message_id });
+        const [userIdArg, targetLangArg, serviceArg] = parts;
+        userWhitelist[userIdArg] = {
+          target_lang: targetLangArg,
+          service: serviceArg.toLowerCase()
+        };
+        saveWhitelistToFile();
+        logger.info(`User ${userIdArg} added/updated. target_lang=${targetLangArg}, service=${serviceArg}`);
+        return ctx.reply(`User ${userIdArg} added/updated. target_lang=${targetLangArg}, service=${serviceArg}`);
       }
-    } else {
-      logger.info(`User ${userId} is unknown, skipping translation.`);
+
+      if (trimmedText.startsWith('/whitelist_remove')) {
+        const parts = trimmedText.split(' ').slice(1);
+        if (parts.length < 1) {
+          return ctx.reply('Usage: /whitelist_remove USER_ID');
+        }
+        const [userIdArg] = parts;
+        if (userWhitelist[userIdArg]) {
+          delete userWhitelist[userIdArg];
+          saveWhitelistToFile();
+          logger.info(`User ${userIdArg} removed from the whitelist.`);
+          return ctx.reply(`User ${userIdArg} removed from the whitelist.`);
+        } else {
+          return ctx.reply(`User ${userIdArg} not found in the whitelist.`);
+        }
+      }
+
+      if (trimmedText === '/whitelist') {
+        const currentList = Object.entries(userWhitelist).map(([id, data]) => ({
+          id,
+          target_lang: data.target_lang,
+          service: data.service
+        }));
+        return ctx.reply(`Current whitelist:\n${JSON.stringify(currentList, null, 2)}`);
+      }
+    }
+
+    // Translation in Group Chats Only
+    if (chatType && chatType.endsWith('group')) {
+      // Ignore commands
+      if (trimmedText.startsWith('/')) {
+        logger.debug('Skipping translation for a command.');
+        return;
+      }
+      if (userWhitelist[userId]) {
+        const { target_lang, service } = userWhitelist[userId];
+
+        try {
+          logger.debug(
+            `Original message from user ${userId}: "${messageText}"\n` +
+            `service=${service}, target_lang=${target_lang}`
+          );
+          const translated = await translateText(messageText, target_lang, service);
+
+          if (translated == messageText) {
+            logger.debug('Skipping translation because translated text is the same.');
+            return;
+          }
+
+          // Reply to the original message
+          await ctx.reply(translated, { reply_to_message_id: ctx.message.message_id });
+        } catch (err) {
+          logger.error(`Could not translate msg from user ${userId}: ${err.message}`);
+          await ctx.reply('Translation failed', { reply_to_message_id: ctx.message.message_id });
+        }
+      } else {
+        logger.info(`User ${userId} is unknown, skipping translation.`);
+      }
     }
   }
 });
