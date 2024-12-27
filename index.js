@@ -4,7 +4,7 @@ const express = require('express');
 const { Telegraf } = require('telegraf');
 const winston = require('winston');
 const axios = require('axios');
-const OpenAI = require('openai'); // v4.x client
+const OpenAI = require('openai');
 
 // -- Environment Variables --
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -32,6 +32,8 @@ const logger = winston.createLogger({
   ]
 });
 
+logger.info('Bot is starting up...');
+
 // -- Load Whitelist from whitelist.json --
 let userWhitelist = {};
 try {
@@ -49,11 +51,9 @@ try {
       }
     });
     logger.info(`Loaded ${Object.keys(userWhitelist).length} whitelisted user(s).`);
-  } else {
-    logger.warn("whitelist.json does not have a 'users' array");
   }
 } catch (err) {
-  logger.error("Error reading or parsing whitelist.json:", err);
+  logger.error("Error reading or parsing whitelist.json:");
 }
 
 // -- Helper to Save Whitelist to File --
@@ -120,9 +120,10 @@ async function callChatGPT(text, targetLang) {
     messages: [
       {
         role: 'system',
-        content: `You are a helpful AI that translates user content into language code ${targetLang}.
-If the text is already in that language, you can return it as-is.
-Return only the translated message and nothing else.`
+        content: `You are a helpful AI that translates user content into language code ${targetLang}. Rules:
+ - the content is a chat message, so slang and informal wording are acceptable, be casual but precise
+ - output only the translated message and nothing else
+ - if the text is already in that language, return it as-is`
       },
       {
         role: 'user',
@@ -156,7 +157,7 @@ async function translateText(text, targetLang, service) {
   while (attempt < MAX_TRIES) {
     attempt++;
     try {
-      logger.info(`Attempt ${attempt}/${MAX_TRIES} for ${service.toUpperCase()} translation...`);
+      logger.debug(`Attempt ${attempt}/${MAX_TRIES} for ${service.toUpperCase()} translation...`);
 
       if (service === 'deepl') {
         return await callDeepL(text, targetLang);
@@ -186,7 +187,15 @@ bot.start((ctx) => {
   logger.info(`Received "/start" from user ${userId} in chat: ${chatType}`);
 
   if (chatType === 'private') {
-    ctx.reply('Hello! Welcome to our bot. How can I help you today?');
+    ctx.reply(`Hello! This is a private translation bot. If you have admin rights you can use these commands:
+/whitelist - to display current whitelist
+/whitelist_add - to add or edit a user in the whitelist
+/whitelist_remove - to remove a user from the whitelist
+
+Otherwise you can set up your own instance, more info here:
+https://github.com/deseven/telegram-groupchat-translator
+
+Your User ID is ${userId}.`);
   }
 });
 
@@ -201,7 +210,7 @@ bot.on('message', async (ctx) => {
   logger.info(`Incoming message from user: ${userId}, chat type: ${chatType}`);
 
   if (!messageText) {
-    logger.info('No text/caption found. Skipping translation.');
+    logger.debug('No text/caption found. Skipping translation.');
     return;
   }
 
@@ -222,7 +231,7 @@ bot.on('message', async (ctx) => {
         service: serviceArg.toLowerCase()
       };
       saveWhitelistToFile();
-
+      logger.info(`User ${userIdArg} added/updated. target_lang=${targetLangArg}, service=${serviceArg}`);
       ctx.reply(`User ${userIdArg} added/updated. target_lang=${targetLangArg}, service=${serviceArg}`);
       return;
     }
@@ -238,15 +247,15 @@ bot.on('message', async (ctx) => {
       if (userWhitelist[userIdArg]) {
         delete userWhitelist[userIdArg];
         saveWhitelistToFile();
-        ctx.reply(`User ${userIdArg} removed from the whitelist`);
+        logger.info(`User ${userIdArg} removed from the whitelist.`);
+        ctx.reply(`User ${userIdArg} removed from the whitelist.`);
       } else {
-        ctx.reply(`User ${userIdArg} not found in the whitelist`);
+        ctx.reply(`User ${userIdArg} not found in the whitelist.`);
       }
       return;
     }
 
-    if (trimmedText.startsWith('/whitelist')) {
-      // e.g. /whitelist
+    if (trimmedText == '/whitelist') {
       // Output JSON of the current list
       const currentList = Object.entries(userWhitelist).map(([id, data]) => ({
         id,
@@ -264,7 +273,7 @@ bot.on('message', async (ctx) => {
       const { target_lang, service } = userWhitelist[userId];
 
       try {
-        logger.info(
+        logger.debug(
           `Original message from user ${userId}: "${messageText}"\n` +
           `service=${service}, target_lang=${target_lang}`
         );
@@ -277,7 +286,7 @@ bot.on('message', async (ctx) => {
         await ctx.reply('Translation failed', { reply_to_message_id: ctx.message.message_id });
       }
     } else {
-      logger.info(`User ${userId} is not whitelisted. Not sending a reply.`);
+      logger.info(`User ${userId} is unknown, skipping translation.`);
     }
   }
 });
@@ -289,7 +298,7 @@ app.use(express.json());
 // Set the webhook on startup
 bot.telegram.setWebhook(`${WEBHOOK_URL}/webhook`)
   .then(() => {
-    logger.info(`Webhook set: ${WEBHOOK_URL}/webhook`);
+    logger.debug(`Webhook set: ${WEBHOOK_URL}/webhook`);
   })
   .catch((err) => {
     logger.error('Error setting webhook:', err);
@@ -308,5 +317,5 @@ app.post('/webhook', (req, res) => {
 
 // Start the server
 app.listen(PORT, () => {
-  logger.info(`Bot server running on port ${PORT}`);
+  logger.info(`Bot is serving webhooks on port ${PORT}`);
 });
