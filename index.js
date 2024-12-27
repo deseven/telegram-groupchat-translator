@@ -22,10 +22,10 @@ https://github.com/deseven/telegram-groupchat-translator
 
 Your User ID is %USER_ID%.`;
 
-// DeepL
+// -- DeepL --
 const DEEPL_AUTH_KEY = process.env.DEEPL_AUTH_KEY;
 
-// ChatGPT
+// -- ChatGPT --
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-3.5-turbo';
 const OPENAI_PROMPT = `You are a helpful AI that translates user content into language code %TARGET_LANG%. Rules:
@@ -37,12 +37,23 @@ const OPENAI_PROMPT = `You are a helpful AI that translates user content into la
 const logger = winston.createLogger({
   level: LOG_LEVEL,
   format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
+    // Add color codes for levels
+    winston.format.colorize(),
+
+    // Add a timestamp property to `info`
+    winston.format.timestamp({
+      format: 'YYYY-MM-DD HH:mm:ss'
+    }),
+
+    // Align message output
+    winston.format.align(),
+
+    // Custom printf to format as [TIMESTAMP] LEVEL: message
+    winston.format.printf(({ timestamp, level, message }) => {
+      return `[${timestamp}] [${level}]: ${message}`;
+    })
   ),
-  transports: [
-    new winston.transports.Console()
-  ]
+  transports: [new winston.transports.Console()]
 });
 
 logger.info('Bot is starting up...');
@@ -303,6 +314,21 @@ bot.on('message', async (ctx) => {
   }
 });
 
+// -- Error handling --
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
+});
+
+process.on('uncaughtException', (err) => {
+  logger.error('Uncaught Exception thrown:', err);
+  process.exit(2);
+});
+
+bot.catch((err, ctx) => {
+  logger.error('Global Telegraf error:', err);
+});
+
 // -- Setup Express Webhook --
 const app = express();
 app.use(express.json());
@@ -327,7 +353,12 @@ app.post('/webhook', (req, res) => {
   }
 });
 
-// Start the server
+// Health check
+app.get('/health', (req, res) => {
+  res.send('OK');
+});
+
+// -- Start the server --
 app.listen(PORT, () => {
   logger.info(`Bot is serving webhooks on port ${PORT}`);
 });

@@ -1,5 +1,5 @@
 # telegram-groupchat-translator
-A bot that translates messages in Telegram group chats, using DeepL or ChatGPT. Allows to set which users will have their messages translated, to what language and with which translation service. Intended for a group chats where several individuals speaking different languages would convene.
+A bot that translates messages in Telegram group chats, using DeepL or ChatGPT. Allows to set which users will have their messages translated, to what language and with which translation service. Intended for group chats where several individuals speaking different languages would convene.
 
 ## Requirements
  - any environment that can run node.js
