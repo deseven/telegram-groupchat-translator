@@ -27,11 +27,13 @@ const DEEPL_AUTH_KEY = process.env.DEEPL_AUTH_KEY;
 
 // -- ChatGPT --
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-3.5-turbo';
-const OPENAI_PROMPT = `You are a helpful AI that translates user content into language code %TARGET_LANG%. Rules:
- - the content is a chat message, so slang and informal wording are acceptable, be casual but precise
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+const OPENAI_PROMPT = `You are a helpful AI that translates user messages into language code %TARGET_LANG%. Rules:
+ - slang and informal wording are acceptable, be casual but precise
  - output only the translated message and nothing else
  - if the text is already in that language, return it as-is`;
+const OPENAI_USE_CONTEXT = (process.env.OPENAI_USE_CONTEXT || '').toLowerCase() === 'true';
+const OPENAI_CONTEXT_PROMPT = ` - the message is a reply to another message, marked with '[TranslateContext]' and '[EndTranslateContext]', use it to improve the translation`;
 
 // -- Winston Logger --
 const logger = winston.createLogger({
@@ -119,21 +121,38 @@ async function callDeepL(text, targetLang) {
  *       ChatGPT Helper
  * -------------------------
  */
-async function callChatGPT(text, targetLang) {
+async function callChatGPT(text, targetLang, repliedText = '') {
   const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+  var prompt = OPENAI_PROMPT.replace('%TARGET_LANG%', targetLang);
+
+  if (repliedText.trim().length > 0 && OPENAI_USE_CONTEXT === true) {
+    prompt = prompt + `\n` + OPENAI_CONTEXT_PROMPT;
+  }
+
+  logger.debug(prompt);
+
+  const messages = [
+    {
+      role: 'system',
+      content: prompt
+    }
+  ];
+
+  if (repliedText.trim().length > 0 && OPENAI_USE_CONTEXT === true) {
+    messages.push({
+      role: 'user',
+      content: `[TranslateContext] ${repliedText} [EndTranslateContext]`
+    });
+  }
+
+  messages.push({
+    role: 'user',
+    content: text
+  });
 
   const response = await openai.chat.completions.create({
     model: OPENAI_MODEL,
-    messages: [
-      {
-        role: 'system',
-        content: OPENAI_PROMPT.replace('%TARGET_LANG%', targetLang)
-      },
-      {
-        role: 'user',
-        content: text
-      }
-    ],
+    messages: messages,
     temperature: 0.2
   });
 
@@ -149,7 +168,7 @@ async function callChatGPT(text, targetLang) {
  *  Translate w/ Retry (3x)
  * -------------------------
  */
-async function translateText(text, targetLang, service) {
+async function translateText(text, targetLang, service, repliedText = '') {
   const MAX_TRIES = 3;
 
   for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
@@ -159,7 +178,7 @@ async function translateText(text, targetLang, service) {
       if (service === 'deepl') {
         return await callDeepL(text, targetLang);
       } else if (service === 'chatgpt') {
-        return await callChatGPT(text, targetLang);
+        return await callChatGPT(text, targetLang, repliedText);
       } else {
         throw new Error(`Unknown translation service: ${service}`);
       }
@@ -246,12 +265,21 @@ bot.on('message', async (ctx) => {
       if (userWhitelist[userId]) {
         const { target_lang, service } = userWhitelist[userId];
 
+        // Grab the text of the message the user is replying to, if any.
+        let repliedMessageText = '';
+        if (ctx.message.reply_to_message) {
+          // It could be text or a caption (for photos, etc.)
+          repliedMessageText = ctx.message.reply_to_message.text 
+            || ctx.message.reply_to_message.caption 
+            || '';
+        }
+
         try {
           logger.debug(
             `Original message from user ${userId}: "${messageText}"\n` +
             `service=${service}, target_lang=${target_lang}`
           );
-          const translated = await translateText(messageText, target_lang, service);
+          const translated = await translateText(messageText, target_lang, service, repliedMessageText);
 
           if (translated == messageText) {
             logger.debug('Skipping translation because translated text is the same.');

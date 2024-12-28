@@ -1,4 +1,3 @@
-version: "3.9"
 services:
   bot:
     image: node:18-alpine
