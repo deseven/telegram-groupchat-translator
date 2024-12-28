@@ -5,6 +5,7 @@ const { Telegraf } = require('telegraf');
 const winston = require('winston');
 const axios = require('axios');
 const OpenAI = require('openai');
+const prettyjson = require('prettyjson');
 
 // -- Environment Variables --
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -63,7 +64,7 @@ const envSettings = {
   OPENAI_TEMPERATURE,
   OPENAI_USE_CONTEXT,
 };
-logger.info(`=== Startup Settings ===\n${JSON.stringify(envSettings, null, 2)}`);
+logger.info(`=== Startup Settings ===\n${prettyjson.render(envSettings,{noColor: true})}`);
 
 // -- Load Whitelist from whitelist.json --
 let userWhitelist = {};
