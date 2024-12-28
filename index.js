@@ -9,9 +9,9 @@ const OpenAI = require('openai');
 // -- Environment Variables --
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
-const PORT = process.env.PORT || 3000;
-const LOG_LEVEL = process.env.LOG_LEVEL || 'warn'; // default to 'warn'
-const ADMIN_USER_ID = process.env.ADMIN_USER_ID;    // admin ID
+const PORT = parseInt(process.env.PORT,10) || 5005;
+const LOG_LEVEL = process.env.LOG_LEVEL || 'warn';
+const ADMIN_USER_ID = parseInt(process.env.ADMIN_USER_ID,10) || 999999999;
 const INTRO = `Hello! This is a private translation bot. If you have admin rights you can use these commands:
   /whitelist - to display current whitelist
   /whitelist_add - to add or edit a user in the whitelist
@@ -28,6 +28,7 @@ const DEEPL_AUTH_KEY = process.env.DEEPL_AUTH_KEY;
 // -- ChatGPT --
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+const OPENAI_TEMPERATURE = parseFloat(process.env.OPENAI_TEMPERATURE) || 0.2;
 const OPENAI_PROMPT = `You are a helpful AI that translates user messages into language code %TARGET_LANG%. Rules:
  - slang and informal wording are acceptable, be casual but precise
  - output only the translated message and nothing else
@@ -48,6 +49,21 @@ const logger = winston.createLogger({
 });
 
 logger.info('Bot is starting up...');
+
+// -- Display settings on startup --
+const envSettings = {
+  BOT_TOKEN: obfuscate(BOT_TOKEN),
+  WEBHOOK_URL,
+  PORT,
+  LOG_LEVEL,
+  ADMIN_USER_ID,
+  DEEPL_AUTH_KEY: obfuscate(DEEPL_AUTH_KEY),
+  OPENAI_API_KEY: obfuscate(OPENAI_API_KEY),
+  OPENAI_MODEL,
+  OPENAI_TEMPERATURE,
+  OPENAI_USE_CONTEXT,
+};
+logger.info(`=== Startup Settings ===\n${JSON.stringify(envSettings, null, 2)}`);
 
 // -- Load Whitelist from whitelist.json --
 let userWhitelist = {};
@@ -153,7 +169,7 @@ async function callChatGPT(text, targetLang, repliedText = '') {
   const response = await openai.chat.completions.create({
     model: OPENAI_MODEL,
     messages: messages,
-    temperature: 0.2
+    temperature: OPENAI_TEMPERATURE
   });
 
   if (response.choices?.[0]?.message?.content) {
@@ -190,6 +206,15 @@ async function translateText(text, targetLang, service, repliedText = '') {
     }
   }
   throw new Error('Unexpected error in translateText()');
+}
+
+// Helper to obfuscate sensitive strings.
+function obfuscate(value) {
+  if (!value) return ''; // Return empty for missing/undefined
+  // Keep the first few characters and last few characters visible
+  // (adjust to your preference).
+  if (value.length <= 8) return '*'.repeat(value.length);
+  return value.substring(0, 4) + '...' + value.substring(value.length - 4);
 }
 
 // -- Initialize the Telegraf Bot --
@@ -345,5 +370,5 @@ app.get('/health', (req, res) => {
 
 // -- Start the server --
 app.listen(PORT, () => {
-  logger.info(`Bot is serving webhooks on port ${PORT}`);
+  logger.info(`Bot started successfully!`);
 });
