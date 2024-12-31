@@ -240,6 +240,7 @@ bot.on('message', async (ctx) => {
     // Handle /start or /help command
     if ((chatType === 'private') && (trimmedText == '/start' || trimmedText == '/help')) {
       logger.info(`Received "${trimmedText}" from user ${userId} in private chat.`);
+      logger.debug(`Sending intro message to user ${userId}.`);
       return ctx.reply(INTRO.replace('%USER_ID%', userId));
     }
 
@@ -248,23 +249,27 @@ bot.on('message', async (ctx) => {
       if (trimmedText.startsWith('/whitelist_add')) {
         const parts = trimmedText.split(' ').slice(1);
         if (parts.length !== 3) {
+          logger.debug(`Invalid /whitelist_add command format from admin ${userId}.`);
           return ctx.reply('Usage: /whitelist_add USER_ID TARGET_LANG SERVICE');
         }
         const [userIdArg, targetLangArg, serviceArg] = parts;
 
         // Validate USER_ID (numeric)
         if (!/^\d+$/.test(userIdArg)) {
+          logger.debug(`Invalid USER_ID format from admin ${userId}: ${userIdArg}`);
           return ctx.reply('Error: USER_ID must be numeric.');
         }
 
         // Validate TARGET_LANG (letters with optional hyphen)
         if (!/^[a-zA-Z-]+$/.test(targetLangArg)) {
+          logger.debug(`Invalid TARGET_LANG format from admin ${userId}: ${targetLangArg}`);
           return ctx.reply('Error: TARGET_LANG must contain only letters and hyphens.');
         }
 
         // Validate SERVICE (either "chatgpt" or "deepl")
         const normalizedServiceArg = serviceArg.toLowerCase();
         if (normalizedServiceArg !== 'chatgpt' && normalizedServiceArg !== 'deepl') {
+          logger.debug(`Invalid SERVICE format from admin ${userId}: ${serviceArg}`);
           return ctx.reply('Error: SERVICE must be either "chatgpt" or "deepl".');
         }
 
@@ -275,12 +280,14 @@ bot.on('message', async (ctx) => {
         };
         saveWhitelistToFile();
         logger.info(`User ${userIdArg} added/updated. target_lang=${targetLangArg}, service=${normalizedServiceArg}`);
+        logger.debug(`Whitelist updated for user ${userIdArg}.`);
         return ctx.reply(`User ${userIdArg} added/updated. target_lang=${targetLangArg}, service=${normalizedServiceArg}`);
       }
 
       if (trimmedText.startsWith('/whitelist_remove')) {
         const parts = trimmedText.split(' ').slice(1);
         if (parts.length !== 1) {
+          logger.debug(`Invalid /whitelist_remove command format from admin ${userId}.`);
           return ctx.reply('Usage: /whitelist_remove USER_ID');
         }
         const [userIdArg] = parts;
@@ -288,8 +295,10 @@ bot.on('message', async (ctx) => {
           delete userWhitelist[userIdArg];
           saveWhitelistToFile();
           logger.info(`User ${userIdArg} removed from the whitelist.`);
+          logger.debug(`Whitelist updated after removing user ${userIdArg}.`);
           return ctx.reply(`User ${userIdArg} removed from the whitelist.`);
         } else {
+          logger.debug(`User ${userIdArg} not found in the whitelist by admin ${userId}.`);
           return ctx.reply(`User ${userIdArg} not found in the whitelist.`);
         }
       }
@@ -300,6 +309,7 @@ bot.on('message', async (ctx) => {
           target_lang: data.target_lang,
           service: data.service
         }));
+        logger.debug(`Admin ${userId} requested the current whitelist.`);
         return ctx.reply(`Current whitelist:\n${JSON.stringify(currentList, null, 2)}`);
       }
     }
@@ -321,6 +331,7 @@ bot.on('message', async (ctx) => {
           repliedMessageText = ctx.message.reply_to_message.text 
             || ctx.message.reply_to_message.caption 
             || '';
+          logger.debug(`User ${userId} is replying to a message with text: "${repliedMessageText}"`);
         }
 
         try {
@@ -328,7 +339,10 @@ bot.on('message', async (ctx) => {
             `Original message from user ${userId}: "${messageText}"\n` +
             `service=${service}, target_lang=${target_lang}`
           );
+
           const translated = await translateText(messageText, target_lang, service, repliedMessageText);
+
+          logger.debug(`Translated message: "${translated}"\n`);
 
           if (translated == messageText) {
             logger.debug('Skipping translation because translated text is the same.');
@@ -336,13 +350,16 @@ bot.on('message', async (ctx) => {
           }
 
           // Reply to the original message
+          logger.debug(`Replying with translated message to user ${userId}.`);
           await ctx.reply(translated, { reply_to_message_id: ctx.message.message_id });
         } catch (err) {
           logger.error(`Could not translate msg from user ${userId}: ${err.message}`);
+          logger.debug(`Error details: ${err.stack}`);
           await ctx.reply('Translation failed', { reply_to_message_id: ctx.message.message_id });
         }
       } else {
         logger.info(`User ${userId} is unknown, skipping translation.`);
+        logger.debug(`User ${userId} is not in the whitelist.`);
       }
     }
   }
