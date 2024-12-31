@@ -28,6 +28,7 @@ const DEEPL_AUTH_KEY = process.env.DEEPL_AUTH_KEY;
 
 // -- ChatGPT --
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_API_ENDPOINT = process.env.OPENAI_API_ENDPOINT || 'https://api.openai.com/v1';
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const OPENAI_TEMPERATURE = parseFloat(process.env.OPENAI_TEMPERATURE) || 0.2;
 const OPENAI_PROMPT = `You are a helpful AI that translates user messages into language code %TARGET_LANG%. Rules:
@@ -139,7 +140,11 @@ async function callDeepL(text, targetLang) {
  * -------------------------
  */
 async function callChatGPT(text, targetLang, repliedText = '') {
-  const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+  const openai = new OpenAI({ 
+    apiKey: OPENAI_API_KEY,
+    baseURL: OPENAI_API_ENDPOINT
+  });
+
   var prompt = OPENAI_PROMPT.replace('%TARGET_LANG%', targetLang);
 
   if (repliedText.trim().length > 0 && OPENAI_USE_CONTEXT === true) {
