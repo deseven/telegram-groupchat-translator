@@ -247,22 +247,40 @@ bot.on('message', async (ctx) => {
     if (chatType === 'private' && String(userId) === String(ADMIN_USER_ID)) {
       if (trimmedText.startsWith('/whitelist_add')) {
         const parts = trimmedText.split(' ').slice(1);
-        if (parts.length < 3) {
+        if (parts.length !== 3) {
           return ctx.reply('Usage: /whitelist_add USER_ID TARGET_LANG SERVICE');
         }
         const [userIdArg, targetLangArg, serviceArg] = parts;
+
+        // Validate USER_ID (numeric)
+        if (!/^\d+$/.test(userIdArg)) {
+          return ctx.reply('Error: USER_ID must be numeric.');
+        }
+
+        // Validate TARGET_LANG (letters with optional hyphen)
+        if (!/^[a-zA-Z-]+$/.test(targetLangArg)) {
+          return ctx.reply('Error: TARGET_LANG must contain only letters and hyphens.');
+        }
+
+        // Validate SERVICE (either "chatgpt" or "deepl")
+        const normalizedServiceArg = serviceArg.toLowerCase();
+        if (normalizedServiceArg !== 'chatgpt' && normalizedServiceArg !== 'deepl') {
+          return ctx.reply('Error: SERVICE must be either "chatgpt" or "deepl".');
+        }
+
+        // Add/update user in whitelist
         userWhitelist[userIdArg] = {
           target_lang: targetLangArg,
-          service: serviceArg.toLowerCase()
+          service: normalizedServiceArg
         };
         saveWhitelistToFile();
-        logger.info(`User ${userIdArg} added/updated. target_lang=${targetLangArg}, service=${serviceArg}`);
-        return ctx.reply(`User ${userIdArg} added/updated. target_lang=${targetLangArg}, service=${serviceArg}`);
+        logger.info(`User ${userIdArg} added/updated. target_lang=${targetLangArg}, service=${normalizedServiceArg}`);
+        return ctx.reply(`User ${userIdArg} added/updated. target_lang=${targetLangArg}, service=${normalizedServiceArg}`);
       }
 
       if (trimmedText.startsWith('/whitelist_remove')) {
         const parts = trimmedText.split(' ').slice(1);
-        if (parts.length < 1) {
+        if (parts.length !== 1) {
           return ctx.reply('Usage: /whitelist_remove USER_ID');
         }
         const [userIdArg] = parts;

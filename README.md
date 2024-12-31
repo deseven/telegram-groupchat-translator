@@ -28,6 +28,5 @@ A bot that translates messages in Telegram group chats, using DeepL and/or ChatG
 
 ## Notes
  - on the `info` log level, bot outputs all user IDs of all incoming messages to stdout, in case you need a quick way to get them
- - there is little to no validation for private bot commands, so be mindful about what you're doing
  - for the list of supported languages look [here](https://developers.deepl.com/docs/resources/supported-languages#target-languages) (this is for DeepL, but the same language code is getting passed to ChatGPT)
  - there's a `/health` endpoint that could be used for monitoring
