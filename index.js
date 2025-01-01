@@ -150,17 +150,19 @@ async function callChatGPT(text, targetLang, repliedText = '', pronouns = 'none'
     baseURL: OPENAI_API_ENDPOINT
   });
 
-  var prompt = OPENAI_PROMPT.replace('%TARGET_LANG%', targetLang);
+  let prompt = OPENAI_PROMPT.replace('%TARGET_LANG%', targetLang);
+  let replyContext = '';
 
   if (repliedText.trim().length > 0 && OPENAI_USE_CONTEXT === true) {
     prompt = prompt + `\n` + OPENAI_CONTEXT_PROMPT;
+    replyContext = `[TranslateContext] ${repliedText} [EndTranslateContext]`; // Assign value here
   }
 
   if (pronouns !== 'none') {
     prompt = prompt + `\n` + OPENAI_PRONOUNS_PROMPT.replace('%PRONOUNS%', pronouns);
   }
 
-  logger.debug(prompt);
+  logger.debug(`Prompt:\n${prompt}`);
 
   const messages = [
     {
@@ -172,8 +174,9 @@ async function callChatGPT(text, targetLang, repliedText = '', pronouns = 'none'
   if (repliedText.trim().length > 0 && OPENAI_USE_CONTEXT === true) {
     messages.push({
       role: 'user',
-      content: `[TranslateContext] ${repliedText} [EndTranslateContext]`
+      content: replyContext
     });
+    logger.debug(`Context:\n${replyContext}`);
   }
 
   messages.push({
@@ -355,7 +358,7 @@ bot.on('message', async (ctx) => {
 
           const translated = await translateText(messageText, target_lang, service, repliedMessageText, pronouns);
 
-          logger.debug(`Translated message: "${translated}"\n`);
+          logger.debug(`Translated message:\n"${translated}"`);
 
           if (translated == messageText) {
             logger.debug('Skipping translation because translated text is the same.');
