@@ -76,12 +76,13 @@ try {
 
   if (Array.isArray(data.users)) {
     data.users.forEach(user => {
-      const { id, target_lang, service, pronouns } = user;
+      const { id, target_lang, service, pronouns, comment } = user;
       if (id && target_lang && service) {
         userWhitelist[id] = {
           target_lang,
           service: service.toLowerCase(),
-          pronouns: pronouns || 'none'
+          pronouns: pronouns || 'none',
+          comment: comment || ''
         };
       }
     });
@@ -97,7 +98,8 @@ function saveWhitelistToFile() {
     id: Number(id),
     target_lang: data.target_lang,
     service: data.service,
-    pronouns: data.pronouns
+    pronouns: data.pronouns,
+    comment: data.comment
   }));
 
   const updatedJson = { users: usersArray };
@@ -255,11 +257,11 @@ bot.on('message', async (ctx) => {
     if (chatType === 'private' && String(userId) === String(ADMIN_USER_ID)) {
       if (trimmedText.startsWith('/whitelist_add')) {
         const parts = trimmedText.split(' ').slice(1);
-        if (parts.length < 3 || parts.length > 4) {
+        if (parts.length < 3 || parts.length > 5) {
           logger.debug(`Invalid /whitelist_add command format from admin ${userId}.`);
-          return ctx.reply('Usage: /whitelist_add USER_ID TARGET_LANG SERVICE [PRONOUNS]');
+          return ctx.reply('Usage: /whitelist_add USER_ID TARGET_LANG SERVICE [PRONOUNS] [COMMENT]');
         }
-        const [userIdArg, targetLangArg, serviceArg, pronounsArg = 'none'] = parts;
+        const [userIdArg, targetLangArg, serviceArg, pronounsArg = 'none', commentArg = ''] = parts;
 
         // Validate USER_ID (numeric)
         if (!/^\d+$/.test(userIdArg)) {
@@ -284,12 +286,13 @@ bot.on('message', async (ctx) => {
         userWhitelist[userIdArg] = {
           target_lang: targetLangArg,
           service: normalizedServiceArg,
-          pronouns: pronounsArg
+          pronouns: pronounsArg,
+          comment: commentArg
         };
         saveWhitelistToFile();
-        logger.info(`User ${userIdArg} added/updated. target_lang=${targetLangArg}, service=${normalizedServiceArg}, pronouns=${pronounsArg}`);
+        logger.info(`User ${userIdArg} added/updated. target_lang=${targetLangArg}, service=${normalizedServiceArg}, pronouns=${pronounsArg}, comment=${commentArg}`);
         logger.debug(`Whitelist updated for user ${userIdArg}.`);
-        return ctx.reply(`User ${userIdArg} added/updated. target_lang=${targetLangArg}, service=${normalizedServiceArg}, pronouns=${pronounsArg}`);
+        return ctx.reply(`User ${userIdArg} added/updated. target_lang=${targetLangArg}, service=${normalizedServiceArg}, pronouns=${pronounsArg}, comment=${commentArg}`);
       }
 
       if (trimmedText.startsWith('/whitelist_remove')) {
@@ -316,7 +319,8 @@ bot.on('message', async (ctx) => {
           id,
           target_lang: data.target_lang,
           service: data.service,
-          pronouns: data.pronouns
+          pronouns: data.pronouns,
+          comment: data.comment
         }));
         logger.debug(`Admin ${userId} requested the current whitelist.`);
         return ctx.reply(`Current whitelist:\n\`\`\`\n${prettyjson.render(currentList, { noColor: true })}\n\`\`\``, { parse_mode: 'Markdown' });
