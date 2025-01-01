@@ -37,6 +37,7 @@ const OPENAI_PROMPT = `You are a helpful AI that translates user messages into l
  - if the text is already in that language, return it as-is`;
 const OPENAI_USE_CONTEXT = (process.env.OPENAI_USE_CONTEXT || '').toLowerCase() === 'true';
 const OPENAI_CONTEXT_PROMPT = ` - the message is a reply to another message, marked with '[TranslateContext]' and '[EndTranslateContext]', use it to improve the translation`;
+const OPENAI_PRONOUNS_PROMPT = ` - user pronouns are %PRONOUNS%, use them to translate with correct gender`;
 
 // -- Winston Logger --
 const logger = winston.createLogger({
@@ -75,11 +76,12 @@ try {
 
   if (Array.isArray(data.users)) {
     data.users.forEach(user => {
-      const { id, target_lang, service } = user;
+      const { id, target_lang, service, pronouns } = user;
       if (id && target_lang && service) {
         userWhitelist[id] = {
           target_lang,
-          service: service.toLowerCase() // "deepl" or "chatgpt"
+          service: service.toLowerCase(),
+          pronouns: pronouns || 'none'
         };
       }
     });
@@ -94,7 +96,8 @@ function saveWhitelistToFile() {
   const usersArray = Object.entries(userWhitelist).map(([id, data]) => ({
     id: Number(id),
     target_lang: data.target_lang,
-    service: data.service
+    service: data.service,
+    pronouns: data.pronouns
   }));
 
   const updatedJson = { users: usersArray };
@@ -139,8 +142,8 @@ async function callDeepL(text, targetLang) {
  *       ChatGPT Helper
  * -------------------------
  */
-async function callChatGPT(text, targetLang, repliedText = '') {
-  const openai = new OpenAI({ 
+async function callChatGPT(text, targetLang, repliedText = '', pronouns = 'none') {
+  const openai = new OpenAI({
     apiKey: OPENAI_API_KEY,
     baseURL: OPENAI_API_ENDPOINT
   });
@@ -149,6 +152,10 @@ async function callChatGPT(text, targetLang, repliedText = '') {
 
   if (repliedText.trim().length > 0 && OPENAI_USE_CONTEXT === true) {
     prompt = prompt + `\n` + OPENAI_CONTEXT_PROMPT;
+  }
+
+  if (pronouns !== 'none') {
+    prompt = prompt + `\n` + OPENAI_PRONOUNS_PROMPT.replace('%PRONOUNS%', pronouns);
   }
 
   logger.debug(prompt);
@@ -190,7 +197,7 @@ async function callChatGPT(text, targetLang, repliedText = '') {
  *  Translate w/ Retry (3x)
  * -------------------------
  */
-async function translateText(text, targetLang, service, repliedText = '') {
+async function translateText(text, targetLang, service, repliedText = '', pronouns = 'none') {
   const MAX_TRIES = 3;
 
   for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
@@ -200,7 +207,7 @@ async function translateText(text, targetLang, service, repliedText = '') {
       if (service === 'deepl') {
         return await callDeepL(text, targetLang);
       } else if (service === 'chatgpt') {
-        return await callChatGPT(text, targetLang, repliedText);
+        return await callChatGPT(text, targetLang, repliedText, pronouns);
       } else {
         throw new Error(`Unknown translation service: ${service}`);
       }
@@ -248,11 +255,11 @@ bot.on('message', async (ctx) => {
     if (chatType === 'private' && String(userId) === String(ADMIN_USER_ID)) {
       if (trimmedText.startsWith('/whitelist_add')) {
         const parts = trimmedText.split(' ').slice(1);
-        if (parts.length !== 3) {
+        if (parts.length < 3 || parts.length > 4) {
           logger.debug(`Invalid /whitelist_add command format from admin ${userId}.`);
-          return ctx.reply('Usage: /whitelist_add USER_ID TARGET_LANG SERVICE');
+          return ctx.reply('Usage: /whitelist_add USER_ID TARGET_LANG SERVICE [PRONOUNS]');
         }
-        const [userIdArg, targetLangArg, serviceArg] = parts;
+        const [userIdArg, targetLangArg, serviceArg, pronounsArg = 'none'] = parts;
 
         // Validate USER_ID (numeric)
         if (!/^\d+$/.test(userIdArg)) {
@@ -276,12 +283,13 @@ bot.on('message', async (ctx) => {
         // Add/update user in whitelist
         userWhitelist[userIdArg] = {
           target_lang: targetLangArg,
-          service: normalizedServiceArg
+          service: normalizedServiceArg,
+          pronouns: pronounsArg
         };
         saveWhitelistToFile();
-        logger.info(`User ${userIdArg} added/updated. target_lang=${targetLangArg}, service=${normalizedServiceArg}`);
+        logger.info(`User ${userIdArg} added/updated. target_lang=${targetLangArg}, service=${normalizedServiceArg}, pronouns=${pronounsArg}`);
         logger.debug(`Whitelist updated for user ${userIdArg}.`);
-        return ctx.reply(`User ${userIdArg} added/updated. target_lang=${targetLangArg}, service=${normalizedServiceArg}`);
+        return ctx.reply(`User ${userIdArg} added/updated. target_lang=${targetLangArg}, service=${normalizedServiceArg}, pronouns=${pronounsArg}`);
       }
 
       if (trimmedText.startsWith('/whitelist_remove')) {
@@ -307,10 +315,11 @@ bot.on('message', async (ctx) => {
         const currentList = Object.entries(userWhitelist).map(([id, data]) => ({
           id,
           target_lang: data.target_lang,
-          service: data.service
+          service: data.service,
+          pronouns: data.pronouns
         }));
         logger.debug(`Admin ${userId} requested the current whitelist.`);
-        return ctx.reply(`Current whitelist:\n${JSON.stringify(currentList, null, 2)}`);
+        return ctx.reply(`Current whitelist:\n\`\`\`\n${prettyjson.render(currentList, { noColor: true })}\n\`\`\``, { parse_mode: 'Markdown' });
       }
     }
 
@@ -322,14 +331,14 @@ bot.on('message', async (ctx) => {
         return;
       }
       if (userWhitelist[userId]) {
-        const { target_lang, service } = userWhitelist[userId];
+        const { target_lang, service, pronouns } = userWhitelist[userId];
 
         // Grab the text of the message the user is replying to, if any.
         let repliedMessageText = '';
         if (ctx.message.reply_to_message) {
           // It could be text or a caption (for photos, etc.)
-          repliedMessageText = ctx.message.reply_to_message.text 
-            || ctx.message.reply_to_message.caption 
+          repliedMessageText = ctx.message.reply_to_message.text
+            || ctx.message.reply_to_message.caption
             || '';
           logger.debug(`User ${userId} is replying to a message with text: "${repliedMessageText}"`);
         }
@@ -337,10 +346,10 @@ bot.on('message', async (ctx) => {
         try {
           logger.debug(
             `Original message from user ${userId}: "${messageText}"\n` +
-            `service=${service}, target_lang=${target_lang}`
+            `service=${service}, target_lang=${target_lang}, pronouns=${pronouns}`
           );
 
-          const translated = await translateText(messageText, target_lang, service, repliedMessageText);
+          const translated = await translateText(messageText, target_lang, service, repliedMessageText, pronouns);
 
           logger.debug(`Translated message: "${translated}"\n`);
 
