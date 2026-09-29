@@ -1,6 +1,6 @@
 services:
   bot:
-    image: node:18-alpine
+    image: node:22-alpine
     restart: always
     working_dir: /app
     volumes:
