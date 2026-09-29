@@ -34,4 +34,5 @@ A bot that translates messages in Telegram group chats, using any OpenAI-compati
  - `TARGET_LANG` is the language code passed straight to the model (e.g. `EN`, `RU`); refer to your provider's/model's documentation for the accepted values
  - incoming messages are processed strictly one-by-one, in arrival order
  - on a failed translation the request is retried with exponential backoff (1s, 2s, 4s, ... up to `MAX_RETRIES`, default 10). Non-retryable errors (e.g. authentication failures) abort immediately
+ - when a translation cannot be completed, either because of a fatal provider error (e.g. invalid API key or insufficient funds) or because all retries were exhausted, the admin (`ADMIN_USER_ID`) is notified via a direct message
  - there's a `/health` endpoint that could be used for monitoring

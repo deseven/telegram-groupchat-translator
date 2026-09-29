@@ -29,13 +29,16 @@ const OPENAI_API_ENDPOINT = process.env.OPENAI_API_ENDPOINT || 'https://api.open
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const OPENAI_TEMPERATURE = parseFloat(process.env.OPENAI_TEMPERATURE) || 0.2;
 const OPENAI_TIMEOUT_MS = parseInt(process.env.OPENAI_TIMEOUT_MS, 10) || 60000;
-const OPENAI_PROMPT = `You are a helpful AI that translates user messages in the group chat into language code %TARGET_LANG%. Rules:
- - slang and informal wording are acceptable, be casual but precise
- - output only the translated message and nothing else
- - if the text is already in that language, return it as-is`;
+const OPENAI_PROMPT = `You are a helpful AI that translates user messages in the group chat into language code %TARGET_LANG%. You'll receive a message from the user to translate.
+
+Rules:
+- slang and informal wording are acceptable, be casual but precise
+- output only the translated message and nothing else
+- if the text is already in the target language, return it as-is
+- try following the original message style/formatting to mimic the user`;
 const OPENAI_USE_CONTEXT = (process.env.OPENAI_USE_CONTEXT || '').toLowerCase() === 'true';
-const OPENAI_CONTEXT_PROMPT = ` - the message is a reply to another message, marked with '[TranslateContext]' and '[EndTranslateContext]', use it to improve the translation`;
-const OPENAI_PRONOUNS_PROMPT = ` - user pronouns are %PRONOUNS%, use them to translate with correct gender`;
+const OPENAI_CONTEXT_PROMPT = `- the message is a reply to another message, marked with '[TranslateContext]' and '[EndTranslateContext]', use it to improve the translation`;
+const OPENAI_PRONOUNS_PROMPT = `- user pronouns are %PRONOUNS%, use them to translate with correct gender`;
 
 // -- Retry settings (exponential backoff: 1s, 2s, 4s, ...) --
 const MAX_RETRIES = parseInt(process.env.MAX_RETRIES, 10) || 10;
@@ -182,7 +185,7 @@ async function callChatGPT(text, targetLang, repliedText = '', pronouns = 'none'
       role: 'user',
       content: replyContext
     });
-    logger.debug(`Context:\n${replyContext}`);
+    logger.debug(`${replyContext}`);
   }
 
   messages.push({
@@ -212,11 +215,51 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Extracts an HTTP status code from an OpenAI SDK (or generic) error, if any.
+function getErrorStatus(err) {
+  const status = err?.status ?? err?.response?.status ?? err?.httpStatusCode;
+  return typeof status === 'number' ? status : undefined;
+}
+
+// Detects account-level problems that will never be fixed by retrying:
+// depleted funds/quota. Providers report this differently, so we check the
+// Payment Required status, dedicated error codes and the message text (some
+// providers, e.g. OpenAI, report exhausted quota as a 429).
+function isInsufficientFundsError(err) {
+  if (getErrorStatus(err) === 402) return true;
+
+  const code = err?.code ?? err?.error?.code;
+  if (code && ['insufficient_quota', 'insufficient_funds', 'billing_hard_limit_reached', 'payment_required'].includes(code)) {
+    return true;
+  }
+
+  const message = String(err?.message || err?.error?.message || '').toLowerCase();
+  return /insufficient (funds|quota|balance|credits)|not enough (funds|credits|balance)|exceeded your current quota|billing hard limit|out of credits|payment required/.test(message);
+}
+
+// Fatal provider errors point at a broken configuration or a drained account
+// (bad/revoked API key, insufficient funds, forbidden access). They are
+// surfaced to the admin instead of being retried with an ever-growing delay.
+function isFatalProviderError(err) {
+  if (isInsufficientFundsError(err)) return true;
+
+  const status = getErrorStatus(err);
+  if (typeof status === 'number' && status >= 400 && status < 500) {
+    // Rate limiting, timeouts and conflicts are transient, not fatal.
+    if (status === 408 || status === 409 || status === 429) return false;
+    return true;
+  }
+
+  return false;
+}
+
 // Determines whether an error is worth retrying. Permanent errors (bad API
 // key, invalid request, etc.) are surfaced immediately instead of being
 // retried 10 times with an ever-growing delay.
 function isRetryableError(err) {
-  const status = err?.status ?? err?.response?.status ?? err?.httpStatusCode;
+  if (isFatalProviderError(err)) return false;
+
+  const status = getErrorStatus(err);
   if (typeof status === 'number') {
     if (status === 408 || status === 409 || status === 429) return true;
     if (status >= 500) return true;
@@ -261,17 +304,27 @@ async function translateText(text, targetLang, repliedText = '', pronouns = 'non
       lastError = err;
       logger.error(`Translation attempt ${attempt + 1} failed: ${err.message}`);
 
-      if (attempt === MAX_RETRIES) {
+      if (!isRetryableError(err)) {
+        // Non-retryable errors (bad API key, insufficient funds, ...) abort
+        // immediately; remember whether it was a fatal provider problem so
+        // the caller can report an accurate reason to the admin.
+        err.isFatalProviderError = isFatalProviderError(err);
+        logger.warn(err.isFatalProviderError
+          ? 'Fatal provider error, aborting retries.'
+          : 'Error is not retryable, aborting retries.');
         break;
       }
-      if (!isRetryableError(err)) {
-        logger.warn('Error is not retryable, aborting retries.');
+      if (attempt === MAX_RETRIES) {
         break;
       }
     }
   }
 
-  throw lastError || new Error('Unexpected error in translateText()');
+  const error = lastError || new Error('Unexpected error in translateText()');
+  if (error.isFatalProviderError === undefined) {
+    error.isFatalProviderError = isFatalProviderError(error);
+  }
+  throw error;
 }
 
 /**
@@ -316,6 +369,47 @@ function obfuscate(value) {
 
 // -- Initialize the Telegraf Bot --
 const bot = new Telegraf(BOT_TOKEN);
+
+// -- Admin Notifications --
+// Sends a direct message to the admin. Never throws, so a failed notification
+// can never break message processing.
+async function notifyAdmin(text) {
+  try {
+    await bot.telegram.sendMessage(ADMIN_USER_ID, text);
+    logger.info(`Sent admin notification to user ${ADMIN_USER_ID}.`);
+  } catch (err) {
+    logger.error(`Failed to send admin notification to user ${ADMIN_USER_ID}: ${err.message}`);
+  }
+}
+
+// Truncates long values so notifications stay readable.
+function truncateForMessage(value, maxLength = 300) {
+  const text = String(value ?? '');
+  return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
+}
+
+// Notifies the admin about a translation that could not be completed, either
+// because of a fatal provider error or because all retries were exhausted.
+async function notifyAdminOfTranslationFailure(err, details) {
+  const { userId, chatId, chatType, targetLang, messageText } = details;
+  const reason = err?.isFatalProviderError
+    ? 'fatal provider error (not retryable)'
+    : `all retries exhausted (${MAX_RETRIES})`;
+
+  const lines = [
+    '⚠️ Translation failed',
+    `Reason: ${reason}`,
+    `User ID: ${userId}`,
+    `Chat: ${chatType || 'unknown'} (${chatId ?? 'unknown'})`,
+    `Target language: ${targetLang}`,
+    `Original message: ${truncateForMessage(messageText)}`,
+    // Error text can be a full HTML error page (e.g. a 404 for a wrong
+    // endpoint), so allow more room than the other fields.
+    `Error: ${truncateForMessage(err?.message || err, 1000)}`
+  ];
+
+  await notifyAdmin(lines.join('\n'));
+}
 
 // -- Unified Message Handler (executed serially via the queue) --
 async function handleMessage(ctx) {
@@ -449,6 +543,16 @@ async function handleMessage(ctx) {
       logger.error(`Could not translate msg from user ${userId}: ${err.message}`);
       logger.debug(`Error details: ${err.stack}`);
       await ctx.reply('Translation failed', { reply_to_message_id: ctx.message.message_id });
+
+      // Alert the admin so provider/account problems (e.g. insufficient
+      // funds) or a fully exhausted retry cycle do not go unnoticed.
+      await notifyAdminOfTranslationFailure(err, {
+        userId,
+        chatId: ctx.chat?.id,
+        chatType,
+        targetLang: target_lang,
+        messageText
+      });
     }
   }
 }
